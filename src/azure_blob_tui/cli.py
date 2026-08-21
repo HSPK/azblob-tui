@@ -9,6 +9,7 @@ from pathlib import Path
 from .azure import AppError, AzureCatalog, StorageError, find_subscription
 from .stats import StatsProvider
 from .ui import BlobBrowser
+from .scan_cli import run as run_scan
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -16,7 +17,8 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Browse Azure Blob Storage in a terminal. Select a subscription "
             "and account interactively; AML UUID snapshots are hidden by default."
-        )
+        ),
+        epilog="Scanner: abt scan --help",
     )
     parser.add_argument(
         "--subscription",
@@ -51,7 +53,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run(arguments: list[str] | None = None) -> int:
-    args = build_parser().parse_args(arguments)
+    command_arguments = (
+        list(arguments)
+        if arguments is not None
+        else sys.argv[1:]
+    )
+    if command_arguments and command_arguments[0] == "scan":
+        return run_scan(command_arguments[1:])
+    args = build_parser().parse_args(command_arguments)
     if not shutil.which("az"):
         raise AppError("Azure CLI was not found in PATH.")
     if not 1 <= args.page_size <= 5000:

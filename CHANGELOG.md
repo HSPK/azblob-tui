@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0 - 2026-08-21
+
+- Integrate metadata-only, multi-depth, checkpointed scanning as `abt scan`.
+- Persist scan failures and safely retry incomplete Containers by reusing the
+  same SQLite state.
+
 ## 0.1.0 - 2026-08-21
 
 - Browse Azure subscriptions, Storage Accounts, Containers, virtual folders,

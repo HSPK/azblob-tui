@@ -12,6 +12,7 @@ venv/
 # Local scanner/runtime state
 *.sqlite
 *.sqlite-*
+*.lock
 *.db
 *.log
 *.csv

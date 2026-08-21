@@ -25,6 +25,29 @@ az login
 abt
 ```
 
+## Scan folder usage
+
+`abt scan` performs a metadata-only scan, aggregates folder depths in one pass,
+and writes resumable SQLite checkpoints:
+
+```bash
+abt scan \
+  --subscription <subscription-id> \
+  --all \
+  --max-depth 3 \
+  --state abt-scan.sqlite \
+  --output abt-depth1.csv
+```
+
+AML per-snapshot UUID Containers are excluded by default. Reusing the same
+`--state` resumes continuation markers, skips completed Containers, and retries
+failed or interrupted Containers. Progress is written to `abt-scan.log` by
+default and can be displayed live by the TUI:
+
+```bash
+abt --state abt-scan.sqlite --scan-log abt-scan.log
+```
+
 Features:
 
 - Select an Azure subscription and Storage Account inside the TUI.

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import curses
-import re
 import sqlite3
 import time
 from dataclasses import replace
@@ -19,6 +18,7 @@ from .blob import (
     list_hierarchy_page,
     list_containers,
 )
+from .filters import is_aml_snapshot
 from .models import (
     BlobItem,
     ContainerUsage,
@@ -29,12 +29,6 @@ from .models import (
 from .state import load_container_folder_usage, load_usage_state
 from .stats import AccountQueueStats, QueueStats, StatsProvider
 from .table import Column, fit_columns, render_header, render_row
-
-
-AML_SNAPSHOT_PATTERN = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
-    r"[0-9a-f]{4}-[0-9a-f]{12}-[a-z0-9]{26}$"
-)
 
 
 def shorten(value: str, width: int) -> str:
@@ -1383,22 +1377,12 @@ class BlobBrowser:
         self._load_blob_page()
 
     def _is_aml_snapshot(self, container: str) -> bool:
-        if AML_SNAPSHOT_PATTERN.fullmatch(container):
-            return True
-        if self.account is None:
-            return False
-        for workspace_id in self.snapshot_prefixes.get(
-            self.account.name.lower(),
-            set(),
-        ):
-            prefix = f"{workspace_id}-"
-            if (
-                container.startswith(prefix)
-                and len(container) == len(prefix) + 26
-                and container[len(prefix) :].isalnum()
-            ):
-                return True
-        return False
+        workspace_ids = (
+            self.snapshot_prefixes.get(self.account.name.lower(), set())
+            if self.account is not None
+            else set()
+        )
+        return is_aml_snapshot(container, workspace_ids)
 
     def _delete_selected(self, row: object) -> None:
         if self.screen == "containers" and isinstance(row, str):
