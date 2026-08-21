@@ -1,0 +1,183 @@
+import unittest
+
+from azure_blob_tui.models import (
+    BlobItem,
+    ContainerUsage,
+    FolderUsage,
+    StorageAccount,
+    Subscription,
+)
+from azure_blob_tui.ui import BlobBrowser
+
+
+class FakeCatalog:
+    subscriptions = []
+
+
+class FakeClient:
+    def __init__(self):
+        self.deleted_blobs = []
+        self.deleted_containers = []
+
+    def delete_blob(self, account, container, name, etag=""):
+        self.deleted_blobs.append((account.name, container, name, etag))
+
+    def delete_container(self, account, container):
+        self.deleted_containers.append((account.name, container))
+
+
+class UiTests(unittest.TestCase):
+    def test_container_sorting(self):
+        app = BlobBrowser(
+            catalog=FakeCatalog(),
+            state_path=None,
+            stats_provider=None,
+            page_size=100,
+            show_snapshots=False,
+            initial_subscription=None,
+            initial_account=None,
+        )
+        app.screen = "containers"
+        app.account = StorageAccount(
+            "sa",
+            "rg",
+            "loc",
+            "/id",
+            "https://sa.example/",
+            False,
+        )
+        app.container_names = ["small", "large"]
+        app.container_usage = {
+            "small": ContainerUsage(True, 1, 1, 10),
+            "large": ContainerUsage(True, 1, 2, 100),
+        }
+        app.sort_keys["containers"] = "size"
+        app.sort_descending["containers"] = True
+        self.assertEqual(["large", "small"], app._visible_rows())
+
+    def test_sort_marker_and_blob_metadata(self):
+        app = BlobBrowser(
+            catalog=FakeCatalog(),
+            state_path=None,
+            stats_provider=None,
+            page_size=100,
+            show_snapshots=False,
+            initial_subscription=None,
+            initial_account=None,
+        )
+        app.screen = "blobs"
+        app.account = StorageAccount(
+            "sa",
+            "rg",
+            "loc",
+            "/id",
+            "https://sa.example/",
+            False,
+        )
+        app.container = "container"
+        app.sort_keys["blobs"] = "size"
+        app.sort_descending["blobs"] = True
+        labels = {column.key: column.label for column in app._columns()}
+        self.assertEqual("Size [D]", labels["size"])
+        lines = app._detail_lines(
+            BlobItem(
+                name="file.bin",
+                is_prefix=False,
+                metadata={"owner": "team"},
+            )
+        )
+        self.assertIn("Metadata:", lines)
+        self.assertIn("  owner=team", lines)
+
+    def test_folder_aggregate_and_top_level_back(self):
+        app = BlobBrowser(
+            catalog=FakeCatalog(),
+            state_path=None,
+            stats_provider=None,
+            page_size=100,
+            show_snapshots=False,
+            initial_subscription=None,
+            initial_account=None,
+        )
+        app.screen = "blobs"
+        app.folder_usage = {
+            (2, "a/b"): FolderUsage(2, 1_500_000, 1024),
+            (3, "a/b"): FolderUsage(3, 500_000, 512),
+        }
+        app.container = "container"
+        app.container_usage = {
+            "container": ContainerUsage(True, 1, 1_500_000, 1024),
+        }
+        app.prefix = "a/b/"
+        folder = BlobItem(name="a/b/", is_prefix=True)
+        values = app._row_values(folder)
+        self.assertEqual("1.50M", values["blobs"])
+        self.assertEqual("1.00 KiB", values["size"])
+        status = app._scope_status(2, 1)
+        self.assertIn("Total 1.00 KiB / 1.50M Blobs", status)
+        self.assertIn("Direct files 512.00 B / 500.0K", status)
+
+        app.screen = "subscriptions"
+        app._go_back()
+        self.assertIn("Ctrl+C", app.status)
+
+        app.screen = "containers"
+        app._handle_key(ord("q"))
+        self.assertEqual("accounts", app.screen)
+        app.subscription = Subscription(
+            "sub",
+            "Subscription",
+            "tenant",
+            True,
+        )
+        app._handle_key(ord("q"))
+        self.assertEqual("accounts", app.screen)
+        self.assertIn("press S", app.status)
+        app._handle_key(ord("S"))
+        self.assertEqual("subscriptions", app.screen)
+        app._handle_key(ord("q"))
+        self.assertEqual("accounts", app.screen)
+
+    def test_guarded_deletion(self):
+        app = BlobBrowser(
+            catalog=FakeCatalog(),
+            state_path=None,
+            stats_provider=None,
+            page_size=100,
+            show_snapshots=False,
+            initial_subscription=None,
+            initial_account=None,
+        )
+        app.client = FakeClient()
+        app.account = StorageAccount(
+            "sa",
+            "rg",
+            "loc",
+            "/id",
+            "https://sa.example/",
+            False,
+        )
+        app.screen = "containers"
+        app.container_names = ["container"]
+        app._modal = lambda *_: None
+        app._prompt = lambda *_: "container"
+        app._delete_container("container")
+        self.assertEqual([("sa", "container")], app.client.deleted_containers)
+
+        app.screen = "blobs"
+        app.container = "other"
+        blob = BlobItem(
+            name="file",
+            is_prefix=False,
+            etag='"etag"',
+        )
+        app.blob_items = [blob]
+        app._prompt = lambda *_: "DELETE"
+        app._delete_blob(blob)
+        self.assertEqual(
+            [("sa", "other", "file", '"etag"')],
+            app.client.deleted_blobs,
+        )
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+.venv/
+venv/
+
+# Local scanner/runtime state
+*.sqlite
+*.sqlite-*
+*.db
+*.log
+*.csv
+
+# Credentials and local configuration
+.env
+.ssh/
+**/.ssh/
+*.pem
+*.key
+*.pfx
+*.p12
