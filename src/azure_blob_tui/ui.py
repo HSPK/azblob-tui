@@ -85,6 +85,7 @@ class BlobBrowser:
         self.screen = "accounts" if initial_subscription else "subscriptions"
         self.previous_screen = self.screen
         self.subscription_picker_return_screen: str | None = None
+        self.containers_return_screen: str | None = None
         self.account: StorageAccount | None = None
         self.container = ""
         self.prefix = ""
@@ -584,7 +585,7 @@ class BlobBrowser:
                 Column("status", "Scan", 8, 9, hide_priority=5),
                 Column(
                     "size",
-                    "Scanned Size",
+                    "Size",
                     10,
                     12,
                     align="right",
@@ -1139,14 +1140,32 @@ class BlobBrowser:
             self._load_subscription()
             return
         if isinstance(row, StorageAccount):
-            self.account = row
-            self.screen = "containers"
-            self.query = ""
-            self.selected = 0
-            self.offset = 0
-            self._load_containers()
+            self._open_account(row)
+            return
+        if isinstance(row, AccountQueueStats):
+            account = next(
+                (
+                    item
+                    for item in self.accounts
+                    if item.name.casefold() == row.account.casefold()
+                ),
+                None,
+            )
+            if account is None:
+                raise AppError(f"Storage account not found: {row.account}")
+            if self.sort_keys.get("stats") == "size":
+                self.sort_keys["containers"] = "size"
+                self.sort_descending["containers"] = (
+                    self.sort_descending.get("stats", True)
+                )
+            self._open_account(account, return_screen="stats")
             return
         if isinstance(row, str):
+            if self.sort_keys.get("containers") == "size":
+                self.sort_keys["blobs"] = "size"
+                self.sort_descending["blobs"] = (
+                    self.sort_descending.get("containers", False)
+                )
             self.container = row
             self.screen = "blobs"
             self.prefix = ""
@@ -1168,6 +1187,19 @@ class BlobBrowser:
                 self._load_blob_page()
             else:
                 self._show_item_details(row)
+
+    def _open_account(
+        self,
+        account: StorageAccount,
+        return_screen: str | None = None,
+    ) -> None:
+        self.account = account
+        self.containers_return_screen = return_screen
+        self.screen = "containers"
+        self.query = ""
+        self.selected = 0
+        self.offset = 0
+        self._load_containers()
 
     def _go_back(self) -> None:
         self.detail_offset = 0
@@ -1198,7 +1230,8 @@ class BlobBrowser:
             )
             return
         elif self.screen == "containers":
-            self.screen = "accounts"
+            self.screen = self.containers_return_screen or "accounts"
+            self.containers_return_screen = None
             self.account = None
         elif self.prefix:
             trimmed = self.prefix.rstrip("/")

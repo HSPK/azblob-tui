@@ -7,6 +7,7 @@ from azure_blob_tui.models import (
     StorageAccount,
     Subscription,
 )
+from azure_blob_tui.stats import AccountQueueStats
 from azure_blob_tui.ui import BlobBrowser
 
 
@@ -88,6 +89,48 @@ class UiTests(unittest.TestCase):
         )
         self.assertIn("Metadata:", lines)
         self.assertIn("  owner=team", lines)
+
+    def test_live_account_navigation_inherits_size_sort(self):
+        app = BlobBrowser(
+            catalog=FakeCatalog(),
+            state_path=None,
+            stats_provider=None,
+            page_size=100,
+            show_snapshots=False,
+            initial_subscription=None,
+            initial_account=None,
+        )
+        account = StorageAccount(
+            "sa",
+            "rg",
+            "loc",
+            "/id",
+            "https://sa.example/",
+            False,
+        )
+        app.accounts = [account]
+        app.screen = "stats"
+        app.sort_keys["stats"] = "size"
+        app.sort_descending["stats"] = True
+        app._load_containers = lambda: None
+        app._open(AccountQueueStats("sa", 2, 1, 0, 1, 10, 100, 3))
+
+        self.assertEqual("containers", app.screen)
+        self.assertEqual(account, app.account)
+        self.assertEqual("stats", app.containers_return_screen)
+        self.assertEqual("size", app.sort_keys["containers"])
+        self.assertTrue(app.sort_descending["containers"])
+        labels = {column.key: column.label for column in app._columns()}
+        self.assertEqual("Size [D]", labels["size"])
+
+        app._load_blob_page = lambda: None
+        app._open("container")
+        self.assertEqual("blobs", app.screen)
+        self.assertEqual("size", app.sort_keys["blobs"])
+        self.assertTrue(app.sort_descending["blobs"])
+        app._go_back()
+        app._go_back()
+        self.assertEqual("stats", app.screen)
 
     def test_folder_aggregate_and_top_level_back(self):
         app = BlobBrowser(

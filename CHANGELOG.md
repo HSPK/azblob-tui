@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1 - 2026-08-24
+
+- Open Storage Accounts directly from live scanner statistics.
+- Preserve Size sorting when entering Containers and nested Blob directories.
+- Rename the Container `Scanned Size` column to `Size`.
+
 ## 0.2.0 - 2026-08-21
 
 - Integrate metadata-only, multi-depth, checkpointed scanning as `abt scan`.
