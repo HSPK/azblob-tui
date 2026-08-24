@@ -5,7 +5,8 @@ from unittest.mock import patch
 
 from azure_blob_tui.azure import AzureCatalog
 from azure_blob_tui.models import StorageAccount, Subscription
-from azure_blob_tui.settings import UserSettings
+from azure_blob_tui.scan_paths import resolve_scan_paths
+from azure_blob_tui.settings import ScanPaths, UserSettings
 
 
 class SettingsTests(unittest.TestCase):
@@ -15,6 +16,7 @@ class SettingsTests(unittest.TestCase):
             settings = UserSettings(
                 config_dir=root / "config",
                 cache_dir=root / "cache",
+                state_dir=root / "state",
                 cache_ttl_seconds=100,
             )
             settings.save_selected_subscription("sub")
@@ -41,6 +43,56 @@ class SettingsTests(unittest.TestCase):
             self.assertIsNone(
                 settings.load_account_cache("sub", now=1200)
             )
+
+            paths = settings.default_scan_paths("sub", 2)
+            self.assertEqual(root / "state" / "sub", paths.state.parent)
+            settings.save_scan_paths("sub", paths)
+            self.assertEqual(paths, settings.load_scan_paths("sub"))
+            self.assertEqual("sub", settings.selected_subscription_id())
+
+    def test_scan_path_precedence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = UserSettings(
+                config_dir=root / "config",
+                cache_dir=root / "cache",
+                state_dir=root / "state",
+            )
+            defaults = resolve_scan_paths(
+                settings,
+                "sub",
+                export_depth=2,
+                working_directory=root,
+            )
+            self.assertEqual(
+                root / "state" / "sub" / "abt-scan.sqlite",
+                defaults.state,
+            )
+
+            legacy_state = root / "abt-scan.sqlite"
+            legacy_state.touch()
+            legacy = resolve_scan_paths(
+                settings,
+                "sub",
+                working_directory=root,
+            )
+            self.assertEqual(legacy_state, legacy.state)
+
+            saved = ScanPaths(
+                root / "saved.sqlite",
+                root / "saved.csv",
+                root / "saved.log",
+            )
+            settings.save_scan_paths("sub", saved)
+            explicit = resolve_scan_paths(
+                settings,
+                "sub",
+                state=Path("explicit.sqlite"),
+                working_directory=root,
+            )
+            self.assertEqual(root / "explicit.sqlite", explicit.state)
+            self.assertEqual(saved.output, explicit.output)
+            self.assertEqual(saved.log, explicit.log)
 
     def test_catalog_uses_cache_until_forced(self):
         with tempfile.TemporaryDirectory() as directory:

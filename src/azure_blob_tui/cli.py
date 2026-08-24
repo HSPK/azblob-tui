@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 
 from .azure import AppError, AzureCatalog, StorageError, find_subscription
-from .stats import StatsProvider
 from .ui import BlobBrowser
 from .scan_cli import run as run_scan
 
@@ -97,33 +96,17 @@ def run(arguments: list[str] | None = None) -> int:
         )
         catalog.remember_subscription(initial_subscription.id)
 
-    state_path = args.state
-    if state_path is None:
-        default_state = Path("blob-folder-usage-depth1-3.sqlite")
-        state_path = default_state if default_state.is_file() else None
-    elif not state_path.is_file():
-        raise AppError(f"State database not found: {state_path}")
-
-    scan_log_path = args.scan_log
-    if scan_log_path is None:
-        default_log = Path("blob-folder-usage-depth1-3-scan.log")
-        scan_log_path = default_log if default_log.is_file() else None
-    elif not scan_log_path.is_file():
-        raise AppError(f"Scan log not found: {scan_log_path}")
-    stats_provider = (
-        StatsProvider(state_path, scan_log_path)
-        if state_path is not None
-        else None
-    )
-
     app = BlobBrowser(
         catalog=catalog,
-        state_path=state_path,
-        stats_provider=stats_provider,
+        state_path=None,
+        stats_provider=None,
         page_size=args.page_size,
         show_snapshots=args.show_snapshots,
         initial_subscription=initial_subscription,
         initial_account=args.account,
+        state_path_override=args.state,
+        scan_log_path_override=args.scan_log,
+        scan_path_working_directory=Path.cwd(),
     )
     curses.wrapper(app.run)
     return 0

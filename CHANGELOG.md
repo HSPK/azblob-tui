@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.2 - 2026-08-24
+
+- Store scan state, exports, and logs in a subscription-specific XDG state
+  directory instead of depending on the shell working directory.
+- Share path resolution between `abt` and `abt scan`, with explicit arguments,
+  saved subscription paths, and legacy working-directory files supported in
+  that order.
+- Persist each subscription's active scan paths so the TUI automatically finds
+  live statistics and folder-size data.
+
 ## 0.2.1 - 2026-08-24
 
 - Open Storage Accounts directly from live scanner statistics.

@@ -34,19 +34,24 @@ and writes resumable SQLite checkpoints:
 abt scan \
   --subscription <subscription-id> \
   --all \
-  --max-depth 3 \
-  --state abt-scan.sqlite \
-  --output abt-depth1.csv
+  --max-depth 3
 ```
 
 AML per-snapshot UUID Containers are excluded by default. Reusing the same
 `--state` resumes continuation markers, skips completed Containers, and retries
 failed or interrupted Containers. Progress is written to `abt-scan.log` by
-default and can be displayed live by the TUI:
+default and can be displayed live by the TUI. Scan files are stored under
+`${XDG_STATE_HOME:-~/.local/state}/azblob-tui/scans/<subscription-id>/`, so
+their location does not depend on the shell working directory.
 
 ```bash
-abt --state abt-scan.sqlite --scan-log abt-scan.log
+abt
 ```
+
+Explicit `--state`, `--output`, and `--log` paths have highest priority.
+Otherwise, `abt` uses the paths last saved for the subscription, then recognizes
+legacy scan files in the current directory, and finally uses the subscription
+default directory.
 
 Features:
 
@@ -112,6 +117,7 @@ PYTHONPATH=src python -m azure_blob_tui \
 - `blob.py`: paginated Blob REST client and response parsing.
 - `state.py`: optional scanner-state integration.
 - `stats.py`: read-only real-time queue statistics.
+- `scan_paths.py`: subscription-aware scan path resolution and legacy fallback.
 - `table.py`: terminal-width-aware column fitting and rendering.
 - `ui.py`: curses navigation and screens.
 - `cli.py`: argument parsing and application assembly.

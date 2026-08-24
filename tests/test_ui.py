@@ -1,4 +1,6 @@
 import unittest
+import tempfile
+from pathlib import Path
 
 from azure_blob_tui.models import (
     BlobItem,
@@ -7,6 +9,7 @@ from azure_blob_tui.models import (
     StorageAccount,
     Subscription,
 )
+from azure_blob_tui.settings import UserSettings
 from azure_blob_tui.stats import AccountQueueStats
 from azure_blob_tui.ui import BlobBrowser
 
@@ -131,6 +134,41 @@ class UiTests(unittest.TestCase):
         app._go_back()
         app._go_back()
         self.assertEqual("stats", app.screen)
+
+    def test_tui_resolves_subscription_scan_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = UserSettings(
+                config_dir=root / "config",
+                cache_dir=root / "cache",
+                state_dir=root / "state",
+            )
+            subscription = Subscription(
+                "sub",
+                "Subscription",
+                "tenant",
+                True,
+            )
+            paths = settings.default_scan_paths(subscription.id)
+            paths.state.parent.mkdir(parents=True)
+            paths.state.touch()
+            paths.log.touch()
+            catalog = FakeCatalog()
+            catalog.settings = settings
+            app = BlobBrowser(
+                catalog=catalog,
+                state_path=None,
+                stats_provider=None,
+                page_size=100,
+                show_snapshots=False,
+                initial_subscription=subscription,
+                initial_account=None,
+                scan_path_working_directory=root / "elsewhere",
+            )
+            app.subscription = subscription
+            app._configure_scan_paths()
+            self.assertEqual(paths.state, app.state_path)
+            self.assertIsNotNone(app.stats_provider)
 
     def test_folder_aggregate_and_top_level_back(self):
         app = BlobBrowser(

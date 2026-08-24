@@ -21,11 +21,19 @@ class AccountCache:
     age_seconds: float
 
 
+@dataclass(frozen=True)
+class ScanPaths:
+    state: Path
+    output: Path
+    log: Path
+
+
 class UserSettings:
     def __init__(
         self,
         config_dir: Path | None = None,
         cache_dir: Path | None = None,
+        state_dir: Path | None = None,
         cache_ttl_seconds: int = DEFAULT_CACHE_TTL_SECONDS,
     ) -> None:
         self.config_dir = config_dir or (
@@ -46,6 +54,16 @@ class UserSettings:
             )
             / "azure-blob-tui"
         )
+        self.state_dir = state_dir or (
+            Path(
+                os.environ.get(
+                    "XDG_STATE_HOME",
+                    Path.home() / ".local" / "state",
+                )
+            )
+            / "azblob-tui"
+            / "scans"
+        )
         self.cache_ttl_seconds = cache_ttl_seconds
 
     @property
@@ -60,13 +78,56 @@ class UserSettings:
         return str(value) if value else None
 
     def save_selected_subscription(self, subscription_id: str) -> None:
-        self._write_json(
-            self.config_path,
-            {
-                "version": SETTINGS_VERSION,
-                "selected_subscription_id": subscription_id,
-            },
+        payload = self._config_payload()
+        payload["selected_subscription_id"] = subscription_id
+        self._write_json(self.config_path, payload)
+
+    def default_scan_paths(
+        self,
+        subscription_id: str,
+        export_depth: int = 1,
+    ) -> ScanPaths:
+        directory = self.state_dir / self._safe_subscription_id(
+            subscription_id
         )
+        return ScanPaths(
+            state=directory / "abt-scan.sqlite",
+            output=directory / f"abt-depth{export_depth}.csv",
+            log=directory / "abt-scan.log",
+        )
+
+    def load_scan_paths(self, subscription_id: str) -> ScanPaths | None:
+        payload = self._config_payload()
+        all_paths = payload.get("scan_paths")
+        if not isinstance(all_paths, dict):
+            return None
+        raw = all_paths.get(subscription_id)
+        if not isinstance(raw, dict):
+            return None
+        try:
+            return ScanPaths(
+                state=Path(str(raw["state"])).expanduser().resolve(),
+                output=Path(str(raw["output"])).expanduser().resolve(),
+                log=Path(str(raw["log"])).expanduser().resolve(),
+            )
+        except KeyError:
+            return None
+
+    def save_scan_paths(
+        self,
+        subscription_id: str,
+        paths: ScanPaths,
+    ) -> None:
+        payload = self._config_payload()
+        raw_paths = payload.get("scan_paths")
+        all_paths = dict(raw_paths) if isinstance(raw_paths, dict) else {}
+        all_paths[subscription_id] = {
+            "state": str(paths.state),
+            "output": str(paths.output),
+            "log": str(paths.log),
+        }
+        payload["scan_paths"] = all_paths
+        self._write_json(self.config_path, payload)
 
     def load_account_cache(
         self,
@@ -121,12 +182,23 @@ class UserSettings:
         )
 
     def _account_cache_path(self, subscription_id: str) -> Path:
-        safe_id = "".join(
+        return self.cache_dir / (
+            f"accounts-{self._safe_subscription_id(subscription_id)}.json"
+        )
+
+    @staticmethod
+    def _safe_subscription_id(subscription_id: str) -> str:
+        return "".join(
             character
             for character in subscription_id
             if character.isalnum() or character in "-_"
         )
-        return self.cache_dir / f"accounts-{safe_id}.json"
+
+    def _config_payload(self) -> dict[str, object]:
+        payload = self._read_json(self.config_path)
+        if payload is None or payload.get("version") != SETTINGS_VERSION:
+            return {"version": SETTINGS_VERSION}
+        return dict(payload)
 
     @staticmethod
     def _read_json(path: Path) -> dict[str, object] | None:

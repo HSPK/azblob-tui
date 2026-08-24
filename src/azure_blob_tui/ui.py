@@ -26,6 +26,7 @@ from .models import (
     StorageAccount,
     Subscription,
 )
+from .scan_paths import resolve_scan_paths
 from .state import load_container_folder_usage, load_usage_state
 from .stats import AccountQueueStats, QueueStats, StatsProvider
 from .table import Column, fit_columns, render_header, render_row
@@ -67,6 +68,9 @@ class BlobBrowser:
         show_snapshots: bool,
         initial_subscription: Subscription | None,
         initial_account: str | None,
+        state_path_override: Path | None = None,
+        scan_log_path_override: Path | None = None,
+        scan_path_working_directory: Path | None = None,
     ) -> None:
         self.catalog = catalog
         self.subscriptions = catalog.subscriptions
@@ -76,6 +80,11 @@ class BlobBrowser:
         self.snapshot_prefixes: dict[str, set[str]] = {}
         self.state_path = state_path
         self.stats_provider = stats_provider
+        self.state_path_override = state_path_override
+        self.scan_log_path_override = scan_log_path_override
+        self.scan_path_working_directory = (
+            scan_path_working_directory or Path.cwd()
+        )
         self.stats: QueueStats | None = None
         self.last_stats_refresh = 0.0
         self.page_size = page_size
@@ -1296,6 +1305,7 @@ class BlobBrowser:
 
     def _load_subscription(self, force_refresh: bool = False) -> None:
         assert self.subscription is not None
+        self._configure_scan_paths()
         self._busy(
             f"Loading Storage Accounts from {self.subscription.name}..."
         )
@@ -1326,6 +1336,31 @@ class BlobBrowser:
             f"Loaded {len(self.accounts):,} Blob-capable Storage Accounts "
             f"from {source}"
         )
+
+    def _configure_scan_paths(self) -> None:
+        assert self.subscription is not None
+        paths = resolve_scan_paths(
+            self.catalog.settings,
+            self.subscription.id,
+            state=self.state_path_override,
+            log=self.scan_log_path_override,
+            working_directory=self.scan_path_working_directory,
+        )
+        if self.state_path_override is not None and not paths.state.is_file():
+            raise AppError(f"State database not found: {paths.state}")
+        if (
+            self.scan_log_path_override is not None
+            and not paths.log.is_file()
+        ):
+            raise AppError(f"Scan log not found: {paths.log}")
+        self.state_path = paths.state if paths.state.is_file() else None
+        scan_log = paths.log if paths.log.is_file() else None
+        self.stats_provider = (
+            StatsProvider(self.state_path, scan_log)
+            if self.state_path is not None
+            else None
+        )
+        self.stats = None
 
     def _load_containers(self) -> None:
         assert self.account is not None

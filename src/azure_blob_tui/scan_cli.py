@@ -6,6 +6,7 @@ from pathlib import Path
 from .azure import AppError, AzureCatalog, find_subscription
 from .blob import BlobRestClient
 from .models import StorageAccount, Subscription
+from .scan_paths import resolve_scan_paths
 from .scanner import ScanOptions, parse_selection, run_scan
 
 
@@ -55,20 +56,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--state",
         type=Path,
-        default=Path("abt-scan.sqlite"),
-        help="SQLite checkpoint path (default: abt-scan.sqlite).",
+        help="SQLite checkpoint path; overrides the subscription default.",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("abt-depth1.csv"),
-        help="Export CSV path (default: abt-depth1.csv).",
+        help="Export CSV path; overrides the subscription default.",
     )
     parser.add_argument(
         "--log",
         type=Path,
-        default=Path("abt-scan.log"),
-        help="Progress log path (default: abt-scan.log).",
+        help="Progress log path; overrides the subscription default.",
     )
     parser.add_argument(
         "--exclude-container",
@@ -182,17 +180,23 @@ def run(arguments: list[str] | None = None) -> int:
     if not selected_accounts:
         raise AppError("No Storage Accounts selected.")
 
-    failure_path = args.output.with_name(
-        f"{args.output.stem}.errors.csv"
+    paths = resolve_scan_paths(
+        catalog.settings,
+        subscription.id,
+        state=args.state,
+        output=args.output,
+        log=args.log,
+        export_depth=args.depth,
     )
+    failure_path = paths.output.with_name(f"{paths.output.stem}.errors.csv")
     options = ScanOptions(
         subscription=subscription,
         accounts=selected_accounts,
         workspace_ids=workspace_ids,
-        state_path=args.state.expanduser().resolve(),
-        output_path=args.output.expanduser().resolve(),
+        state_path=paths.state,
+        output_path=paths.output,
         failure_path=failure_path.expanduser().resolve(),
-        log_path=args.log.expanduser().resolve(),
+        log_path=paths.log,
         export_depth=args.depth,
         max_depth=args.max_depth,
         workers=args.workers,
@@ -216,6 +220,14 @@ def run(arguments: list[str] | None = None) -> int:
         if input("Start scan? [y/N]: ").strip().lower() not in {"y", "yes"}:
             print("Cancelled.")
             return 0
+    for path in (
+        options.state_path,
+        options.output_path,
+        options.failure_path,
+        options.log_path,
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    catalog.settings.save_scan_paths(subscription.id, paths)
     client = BlobRestClient(token, timeout_seconds=60)
     result = run_scan(client, options)
     with options.log_path.open("a", encoding="utf-8") as output:
