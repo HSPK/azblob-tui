@@ -1575,6 +1575,8 @@ class BlobBrowser:
         )
         safe_addstr(self.window, height - 1, 0, prompt)
         self.window.refresh()
+        previous_delay = self.window.getdelay()
+        self.window.timeout(-1)
         curses.echo()
         curses.curs_set(1)
         try:
@@ -1586,6 +1588,7 @@ class BlobBrowser:
         finally:
             curses.noecho()
             curses.curs_set(0)
+            self.window.timeout(previous_delay)
         return value.decode("utf-8", errors="replace").strip()
 
     def _busy(self, message: str) -> None:

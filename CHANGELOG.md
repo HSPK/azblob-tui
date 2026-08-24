@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.3 - 2026-08-24
+
+- Disable the one-second TUI refresh timeout while typing confirmation or
+  prefix input, then restore it afterward.
+
 ## 0.2.2 - 2026-08-24
 
 - Store scan state, exports, and logs in a subscription-specific XDG state

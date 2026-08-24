@@ -1,6 +1,7 @@
-import unittest
 import tempfile
+import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from azure_blob_tui.models import (
     BlobItem,
@@ -28,6 +29,29 @@ class FakeClient:
 
     def delete_container(self, account, container):
         self.deleted_containers.append((account.name, container))
+
+
+class FakePromptWindow:
+    def __init__(self):
+        self.delays = []
+
+    def getmaxyx(self):
+        return 24, 80
+
+    def addstr(self, *_):
+        pass
+
+    def refresh(self):
+        pass
+
+    def getdelay(self):
+        return 1000
+
+    def timeout(self, delay):
+        self.delays.append(delay)
+
+    def getstr(self, *_):
+        return b"long-container-name"
 
 
 class UiTests(unittest.TestCase):
@@ -259,6 +283,27 @@ class UiTests(unittest.TestCase):
             [("sa", "other", "file", '"etag"')],
             app.client.deleted_blobs,
         )
+
+    def test_prompt_disables_refresh_timeout_while_typing(self):
+        app = BlobBrowser(
+            catalog=FakeCatalog(),
+            state_path=None,
+            stats_provider=None,
+            page_size=100,
+            show_snapshots=False,
+            initial_subscription=None,
+            initial_account=None,
+        )
+        window = FakePromptWindow()
+        app.window = window
+        with (
+            patch("azure_blob_tui.ui.curses.echo"),
+            patch("azure_blob_tui.ui.curses.noecho"),
+            patch("azure_blob_tui.ui.curses.curs_set"),
+        ):
+            value = app._prompt("Confirm")
+        self.assertEqual("long-container-name", value)
+        self.assertEqual([-1, 1000], window.delays)
 
 if __name__ == "__main__":
     unittest.main()
