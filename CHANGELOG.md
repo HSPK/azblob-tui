@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.4 - 2026-08-25
+
+- Restore the TUI refresh timeout without relying on the unsupported curses
+  `window.getdelay()` method.
+
 ## 0.2.3 - 2026-08-24
 
 - Disable the one-second TUI refresh timeout while typing confirmation or

@@ -44,9 +44,6 @@ class FakePromptWindow:
     def refresh(self):
         pass
 
-    def getdelay(self):
-        return 1000
-
     def timeout(self, delay):
         self.delays.append(delay)
 

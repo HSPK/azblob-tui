@@ -32,6 +32,9 @@ from .stats import AccountQueueStats, QueueStats, StatsProvider
 from .table import Column, fit_columns, render_header, render_row
 
 
+REFRESH_TIMEOUT_MS = 1000
+
+
 def shorten(value: str, width: int) -> str:
     if width <= 0:
         return ""
@@ -135,7 +138,7 @@ class BlobBrowser:
         self.window = window
         curses.curs_set(0)
         window.keypad(True)
-        window.timeout(1000)
+        window.timeout(REFRESH_TIMEOUT_MS)
         self._init_colors()
         if self.subscription is not None:
             try:
@@ -1575,7 +1578,6 @@ class BlobBrowser:
         )
         safe_addstr(self.window, height - 1, 0, prompt)
         self.window.refresh()
-        previous_delay = self.window.getdelay()
         self.window.timeout(-1)
         curses.echo()
         curses.curs_set(1)
@@ -1588,7 +1590,7 @@ class BlobBrowser:
         finally:
             curses.noecho()
             curses.curs_set(0)
-            self.window.timeout(previous_delay)
+            self.window.timeout(REFRESH_TIMEOUT_MS)
         return value.decode("utf-8", errors="replace").strip()
 
     def _busy(self, message: str) -> None:
