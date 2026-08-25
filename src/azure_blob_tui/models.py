@@ -22,6 +22,16 @@ class StorageAccount:
 
 
 @dataclass(frozen=True)
+class ContainerItem:
+    name: str
+    is_deleted: bool = False
+    version: str = ""
+    deleted_time: str = ""
+    remaining_retention_days: int | None = None
+    properties: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ContainerUsage:
     completed: bool
     page_count: int
@@ -56,3 +66,7 @@ class BlobItem:
     etag: str = ""
     properties: dict[str, str] = field(default_factory=dict)
     metadata: dict[str, str] = field(default_factory=dict)
+    is_deleted: bool = False
+    version_id: str = ""
+    deleted_time: str = ""
+    remaining_retention_days: int | None = None

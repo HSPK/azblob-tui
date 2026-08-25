@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from azure_blob_tui.models import (
     BlobItem,
+    ContainerItem,
     ContainerUsage,
     FolderUsage,
     StorageAccount,
@@ -71,14 +72,20 @@ class UiTests(unittest.TestCase):
             "https://sa.example/",
             False,
         )
-        app.container_names = ["small", "large"]
+        app.container_items = [
+            ContainerItem("small"),
+            ContainerItem("large"),
+        ]
         app.container_usage = {
             "small": ContainerUsage(True, 1, 1, 10),
             "large": ContainerUsage(True, 1, 2, 100),
         }
         app.sort_keys["containers"] = "size"
         app.sort_descending["containers"] = True
-        self.assertEqual(["large", "small"], app._visible_rows())
+        self.assertEqual(
+            ["large", "small"],
+            [item.name for item in app._visible_rows()],
+        )
 
     def test_sort_marker_and_blob_metadata(self):
         app = BlobBrowser(
@@ -148,7 +155,7 @@ class UiTests(unittest.TestCase):
         self.assertEqual("Size [D]", labels["size"])
 
         app._load_blob_page = lambda: None
-        app._open("container")
+        app._open(ContainerItem("container"))
         self.assertEqual("blobs", app.screen)
         self.assertEqual("size", app.sort_keys["blobs"])
         self.assertTrue(app.sort_descending["blobs"])
@@ -260,10 +267,11 @@ class UiTests(unittest.TestCase):
             False,
         )
         app.screen = "containers"
-        app.container_names = ["container"]
+        container = ContainerItem("container")
+        app.container_items = [container]
         app._modal = lambda *_: None
         app._prompt = lambda *_: "container"
-        app._delete_container("container")
+        app._delete_container(container)
         self.assertEqual([("sa", "container")], app.client.deleted_containers)
 
         app.screen = "blobs"
@@ -280,6 +288,52 @@ class UiTests(unittest.TestCase):
             [("sa", "other", "file", '"etag"')],
             app.client.deleted_blobs,
         )
+
+    def test_soft_deleted_items_are_read_only_and_identified(self):
+        app = BlobBrowser(
+            catalog=FakeCatalog(),
+            state_path=None,
+            stats_provider=None,
+            page_size=100,
+            show_snapshots=False,
+            initial_subscription=None,
+            initial_account=None,
+        )
+        container = ContainerItem(
+            "deleted",
+            is_deleted=True,
+            version="version",
+            deleted_time="today",
+            remaining_retention_days=6,
+        )
+        app.account = StorageAccount(
+            "sa",
+            "rg",
+            "loc",
+            "/id",
+            "https://sa.example/",
+            False,
+        )
+        app.container_items = [container]
+        app.screen = "containers"
+        app.show_deleted = True
+        self.assertEqual("deleted", app._row_values(container)["type"])
+        self.assertEqual("6d", app._row_values(container)["retention"])
+        self.assertIn("Soft deleted: yes", app._detail_lines(container))
+        app._delete_selected(container)
+        self.assertIn("cannot be deleted again", app.status)
+
+        blob = BlobItem(
+            "deleted.bin",
+            is_prefix=False,
+            is_deleted=True,
+            remaining_retention_days=5,
+        )
+        app.screen = "blobs"
+        self.assertEqual("DELETED", app._row_values(blob)["kind"])
+        self.assertEqual("5d", app._row_values(blob)["retention"])
+        app._delete_selected(blob)
+        self.assertIn("cannot be deleted again", app.status)
 
     def test_prompt_disables_refresh_timeout_while_typing(self):
         app = BlobBrowser(

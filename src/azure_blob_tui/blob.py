@@ -10,7 +10,7 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from .azure import AppError, StorageError, TokenProvider
-from .models import BlobItem, StorageAccount
+from .models import BlobItem, ContainerItem, StorageAccount
 
 
 API_VERSION = "2023-11-03"
@@ -55,6 +55,17 @@ def storage_error_details(body: bytes) -> tuple[str, str]:
 
 def next_marker(root: ET.Element) -> str:
     return root.findtext("./NextMarker", default="")
+
+
+def _is_true(value: str | None) -> bool:
+    return bool(value and value.casefold() == "true")
+
+
+def _optional_int(value: str | None) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 class BlobRestClient:
@@ -223,25 +234,68 @@ class BlobRestClient:
 def list_containers(
     client: BlobRestClient,
     account: StorageAccount,
-) -> list[str]:
-    containers: list[str] = []
+    include_deleted: bool = False,
+) -> list[ContainerItem]:
+    containers: list[ContainerItem] = []
     marker = ""
     while True:
         parameters: dict[str, str | int] = {
             "comp": "list",
             "maxresults": 5000,
         }
+        if include_deleted:
+            parameters["include"] = "deleted"
         if marker:
             parameters["marker"] = marker
         root = client.get_xml(account, "", parameters)
-        containers.extend(
-            node.findtext("Name", default="")
-            for node in root.findall("./Containers/Container")
-            if node.findtext("Name", default="")
-        )
+        containers.extend(parse_container_page(root))
         marker = next_marker(root)
         if not marker:
             return containers
+
+
+def parse_container_page(root: ET.Element) -> list[ContainerItem]:
+    containers: list[ContainerItem] = []
+    for node in root.findall("./Containers/Container"):
+        name = node.findtext("Name", default="")
+        if not name:
+            continue
+        properties = node.find("./Properties")
+        property_values = (
+            {
+                child.tag: child.text or ""
+                for child in properties
+            }
+            if properties is not None
+            else {}
+        )
+        deleted = node.findtext(
+            "Deleted",
+            default=property_values.get("Deleted", ""),
+        )
+        version = node.findtext(
+            "Version",
+            default=property_values.get("Version", ""),
+        )
+        deleted_time = node.findtext(
+            "DeletedTime",
+            default=property_values.get("DeletedTime", ""),
+        )
+        retention = node.findtext(
+            "RemainingRetentionDays",
+            default=property_values.get("RemainingRetentionDays", ""),
+        )
+        containers.append(
+            ContainerItem(
+                name=name,
+                is_deleted=_is_true(deleted),
+                version=version,
+                deleted_time=deleted_time,
+                remaining_retention_days=_optional_int(retention),
+                properties=property_values,
+            )
+        )
+    return containers
 
 
 def parse_blob_page(root: ET.Element) -> tuple[list[BlobItem], str]:
@@ -283,10 +337,30 @@ def parse_blob_page(root: ET.Element) -> tuple[list[BlobItem], str]:
                 size_bytes = int(length_text)
             except ValueError:
                 size_bytes = 0
+            deleted = node.findtext(
+                "Deleted",
+                default=property_values.get("Deleted", ""),
+            )
+            version_id = node.findtext(
+                "VersionId",
+                default=property_values.get("VersionId", ""),
+            )
+            deleted_time = node.findtext(
+                "DeletedTime",
+                default=property_values.get("DeletedTime", ""),
+            )
+            retention = node.findtext(
+                "RemainingRetentionDays",
+                default=property_values.get("RemainingRetentionDays", ""),
+            )
             items.append(
                 BlobItem(
                     name=node.findtext("Name", default=""),
                     is_prefix=False,
+                    is_deleted=_is_true(deleted),
+                    version_id=version_id,
+                    deleted_time=deleted_time,
+                    remaining_retention_days=_optional_int(retention),
                     size_bytes=size_bytes,
                     last_modified=(
                         properties.findtext("Last-Modified", default="")
@@ -328,6 +402,7 @@ def list_hierarchy_page(
     start_marker: str,
     page_size: int,
     max_service_pages: int = 100,
+    include_deleted: bool = False,
 ) -> tuple[list[BlobItem], str, int]:
     items: list[BlobItem] = []
     marker = start_marker
@@ -340,7 +415,9 @@ def list_hierarchy_page(
             "comp": "list",
             "delimiter": "/",
             "maxresults": min(remaining, 5000),
-            "include": "metadata",
+            "include": (
+                "metadata,deleted" if include_deleted else "metadata"
+            ),
         }
         if prefix:
             parameters["prefix"] = prefix

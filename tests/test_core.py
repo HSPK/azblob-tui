@@ -10,10 +10,12 @@ from azure_blob_tui.azure import StorageError
 from azure_blob_tui.blob import (
     BlobRestClient,
     human_count,
+    list_containers,
     list_hierarchy_page,
     parse_blob_page,
+    parse_container_page,
 )
-from azure_blob_tui.models import ContainerUsage, StorageAccount
+from azure_blob_tui.models import BlobItem, ContainerUsage, StorageAccount
 from azure_blob_tui.state import load_folder_usage, load_usage_state
 
 
@@ -23,6 +25,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual("1.50K", human_count(1500))
         self.assertEqual("2.50M", human_count(2_500_000))
         self.assertEqual("1.42B", human_count(1_420_000_000))
+        self.assertEqual(42, BlobItem("file", False, 42).size_bytes)
 
     def test_parse_blob_page(self):
         root = ET.fromstring(
@@ -50,6 +53,103 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(42, items[1].size_bytes)
         self.assertEqual({"owner": "team"}, items[1].metadata)
         self.assertEqual("BlockBlob", items[1].properties["BlobType"])
+
+    def test_parse_soft_deleted_containers_and_blobs(self):
+        container_root = ET.fromstring(
+            """
+            <EnumerationResults>
+              <Containers>
+                <Container>
+                  <Name>active</Name>
+                  <Properties><Last-Modified>now</Last-Modified></Properties>
+                </Container>
+                <Container>
+                  <Name>deleted</Name>
+                  <Properties>
+                    <Deleted>true</Deleted>
+                    <Version>version-1</Version>
+                    <DeletedTime>yesterday</DeletedTime>
+                    <RemainingRetentionDays>6</RemainingRetentionDays>
+                  </Properties>
+                </Container>
+              </Containers>
+            </EnumerationResults>
+            """
+        )
+        containers = parse_container_page(container_root)
+        self.assertFalse(containers[0].is_deleted)
+        self.assertTrue(containers[1].is_deleted)
+        self.assertEqual("version-1", containers[1].version)
+        self.assertEqual(6, containers[1].remaining_retention_days)
+
+        blob_root = ET.fromstring(
+            """
+            <EnumerationResults>
+              <Blobs>
+                <Blob>
+                  <Name>deleted.bin</Name>
+                  <Deleted>true</Deleted>
+                  <VersionId>version-2</VersionId>
+                  <DeletedTime>today</DeletedTime>
+                  <RemainingRetentionDays>7</RemainingRetentionDays>
+                  <Properties>
+                    <Content-Length>42</Content-Length>
+                  </Properties>
+                </Blob>
+              </Blobs>
+            </EnumerationResults>
+            """
+        )
+        blobs, _ = parse_blob_page(blob_root)
+        self.assertTrue(blobs[0].is_deleted)
+        self.assertEqual("version-2", blobs[0].version_id)
+        self.assertEqual(7, blobs[0].remaining_retention_days)
+
+    def test_deleted_blob_listing_uses_include_flag(self):
+        class Client:
+            parameters = None
+
+            def get_xml(self, account, container, parameters):
+                self.parameters = parameters
+                if not container:
+                    return ET.fromstring(
+                        """
+                        <EnumerationResults>
+                          <Containers></Containers>
+                          <NextMarker></NextMarker>
+                        </EnumerationResults>
+                        """
+                    )
+                return ET.fromstring(
+                    """
+                    <EnumerationResults>
+                      <Blobs></Blobs>
+                      <NextMarker></NextMarker>
+                    </EnumerationResults>
+                    """
+                )
+
+        client = Client()
+        account = StorageAccount(
+            "sa",
+            "rg",
+            "loc",
+            "/id",
+            "https://sa.example/",
+            False,
+        )
+        list_containers(client, account, include_deleted=True)
+        self.assertEqual("deleted", client.parameters["include"])
+        list_hierarchy_page(
+            client,
+            account,
+            "container",
+            "",
+            "",
+            500,
+            include_deleted=True,
+        )
+        self.assertEqual("metadata,deleted", client.parameters["include"])
 
     def test_delete_is_not_retried_after_ambiguous_response(self):
         class Token:

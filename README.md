@@ -60,6 +60,8 @@ Features:
 - Cache Storage Accounts and AML workspace mappings for 10 days; press `r`
   on the account screen to refresh immediately and `S` to change subscription.
 - Hide Azure ML per-snapshot UUID containers by default.
+- Toggle soft-deleted Containers and Blobs with `x`; show deletion time,
+  remaining retention days, and Container/Blob version identifiers.
 - Search accounts, containers, and the current Blob page.
 - Browse virtual folders with paginated `List Blobs` requests.
 - Coalesce short Azure service pages caused by partition boundaries into one
@@ -77,6 +79,7 @@ Features:
 - Scroll extended Blob properties and metadata with `[` / `]`.
 - Delete an individual Blob or Container with `D` and typed confirmation.
   Partial/in-progress scanner Containers are protected from deletion.
+  Soft-deleted items are read-only; restoration is not performed automatically.
 
 Configuration is stored under `${XDG_CONFIG_HOME:-~/.config}/azure-blob-tui`.
 Noncredential resource metadata is cached under

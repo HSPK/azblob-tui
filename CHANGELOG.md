@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0 - 2026-08-25
+
+- Toggle soft-deleted Containers and Blobs with `x`.
+- Show deletion time, remaining retention days, and version identifiers.
+- Keep soft-deleted items read-only while preserving existing deletion safety.
+
 ## 0.2.4 - 2026-08-25
 
 - Restore the TUI refresh timeout without relying on the unsupported curses

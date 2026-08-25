@@ -199,11 +199,14 @@ def discover_tasks(
         for future in as_completed(future_accounts):
             account = future_accounts[future]
             try:
-                names = future.result()
+                containers = future.result()
             except StorageError as error:
                 failures.append((account.name, str(error)))
                 continue
-            for name in names:
+            for container in containers:
+                if container.is_deleted:
+                    continue
+                name = container.name
                 if name in excluded_containers:
                     continue
                 if exclude_aml_snapshots and is_aml_snapshot(

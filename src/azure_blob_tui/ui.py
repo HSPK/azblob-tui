@@ -21,6 +21,7 @@ from .blob import (
 from .filters import is_aml_snapshot
 from .models import (
     BlobItem,
+    ContainerItem,
     ContainerUsage,
     FolderUsage,
     StorageAccount,
@@ -92,6 +93,7 @@ class BlobBrowser:
         self.last_stats_refresh = 0.0
         self.page_size = page_size
         self.show_snapshots = show_snapshots
+        self.show_deleted = False
         self.initial_account = initial_account
 
         self.screen = "accounts" if initial_subscription else "subscriptions"
@@ -121,7 +123,7 @@ class BlobBrowser:
             "stats": True,
         }
 
-        self.container_names: list[str] = []
+        self.container_items: list[ContainerItem] = []
         self.container_usage: dict[str, ContainerUsage] = {}
         self.folder_usage: dict[tuple[int, str], FolderUsage] = {}
         self.hidden_snapshot_count = 0
@@ -337,11 +339,13 @@ class BlobBrowser:
             )
             return (
                 f"Azure Blob Browser | {self.account.name} | "
-                f"Containers{hidden}"
+                f"Containers{hidden} | soft deleted: "
+                f"{'shown' if self.show_deleted else 'hidden'}"
             )
         return (
             f"Azure Blob Browser | {self.account.name}/{self.container}/"
-            f"{self.prefix}"
+            f"{self.prefix} | soft deleted: "
+            f"{'shown' if self.show_deleted else 'hidden'}"
         )
 
     def _help_line(self) -> str:
@@ -354,8 +358,8 @@ class BlobBrowser:
         if self.screen in ("subscriptions", "accounts"):
             return common
         if self.screen == "containers":
-            return f"u UUID toggle | {common}"
-        return f"n/p page  i details | {common}"
+            return f"u UUID  x soft-deleted | {common}"
+        return f"x soft-deleted  n/p page  i details | {common}"
 
     def _visible_rows(self) -> list[object]:
         query = self.query.lower()
@@ -400,16 +404,25 @@ class BlobBrowser:
             return self._sort_rows(rows)
 
         if self.screen == "containers":
-            names = self.container_names
+            items = self.container_items
+            if not self.show_deleted:
+                items = [item for item in items if not item.is_deleted]
             if not self.show_snapshots:
-                names = [
-                    name
-                    for name in names
-                    if not self._is_aml_snapshot(name)
+                items = [
+                    item
+                    for item in items
+                    if not self._is_aml_snapshot(item.name)
                 ]
             if query:
-                names = [name for name in names if query in name.lower()]
-            return self._sort_rows(list(names))
+                items = [
+                    item
+                    for item in items
+                    if query
+                    in (
+                        f"{item.name} {item.deleted_time} {item.version}"
+                    ).lower()
+                ]
+            return self._sort_rows(list(items))
 
         rows = list(self.blob_items)
         if query:
@@ -453,15 +466,28 @@ class BlobBrowser:
                 "location": row.location.casefold(),
                 "hns": row.hns_enabled,
             }.get(key, row.name.casefold())
-        if isinstance(row, str):
-            state = self.container_usage.get(row)
+        if isinstance(row, ContainerItem):
+            state = (
+                None
+                if row.is_deleted
+                else self.container_usage.get(row.name)
+            )
             return {
-                "name": row.casefold(),
-                "type": self._is_aml_snapshot(row),
-                "status": state.status if state else "",
+                "name": row.name.casefold(),
+                "type": self._container_type(row),
+                "status": (
+                    "deleted"
+                    if row.is_deleted
+                    else state.status if state else ""
+                ),
                 "size": state.size_bytes if state else -1,
                 "blobs": state.blob_count if state else -1,
-            }.get(key, row.casefold())
+                "retention": (
+                    row.remaining_retention_days
+                    if row.remaining_retention_days is not None
+                    else -1
+                ),
+            }.get(key, row.name.casefold())
         if isinstance(row, BlobItem):
             folder_state = self._folder_usage_for(row)
             return {
@@ -479,6 +505,11 @@ class BlobBrowser:
                 ),
                 "tier": row.access_tier.casefold(),
                 "modified": row.last_modified,
+                "retention": (
+                    row.remaining_retention_days
+                    if row.remaining_retention_days is not None
+                    else -1
+                ),
             }.get(key, row.name.casefold())
         if isinstance(row, AccountQueueStats):
             return {
@@ -611,6 +642,14 @@ class BlobBrowser:
                     align="right",
                     hide_priority=15,
                 ),
+                Column(
+                    "retention",
+                    "Retain",
+                    7,
+                    9,
+                    align="right",
+                    hide_priority=25,
+                ),
             ]
         elif self.screen == "stats":
             columns = [
@@ -684,6 +723,14 @@ class BlobBrowser:
                     29,
                     hide_priority=20,
                 ),
+                Column(
+                    "retention",
+                    "Retain",
+                    7,
+                    9,
+                    align="right",
+                    hide_priority=25,
+                ),
             ]
 
         sort_key = self.sort_keys.get(self.screen)
@@ -716,16 +763,27 @@ class BlobBrowser:
                 "location": row.location,
                 "hns": "yes" if row.hns_enabled else "no",
             }
-        if isinstance(row, str):
-            state = self.container_usage.get(row)
+        if isinstance(row, ContainerItem):
+            state = (
+                None
+                if row.is_deleted
+                else self.container_usage.get(row.name)
+            )
             return {
-                "name": row,
-                "type": (
-                    "snapshot" if self._is_aml_snapshot(row) else "data"
+                "name": row.name,
+                "type": self._container_type(row),
+                "status": (
+                    "deleted"
+                    if row.is_deleted
+                    else state.status if state else "-"
                 ),
-                "status": state.status if state else "-",
                 "size": human_size(state.size_bytes) if state else "-",
                 "blobs": human_count(state.blob_count) if state else "-",
+                "retention": (
+                    f"{row.remaining_retention_days}d"
+                    if row.remaining_retention_days is not None
+                    else "-"
+                ),
             }
         if isinstance(row, BlobItem):
             relative = (
@@ -735,7 +793,13 @@ class BlobBrowser:
             )
             folder_state = self._folder_usage_for(row)
             return {
-                "kind": "DIR" if row.is_prefix else "BLOB",
+                "kind": (
+                    "DIR"
+                    if row.is_prefix
+                    else "DELETED"
+                    if row.is_deleted
+                    else "BLOB"
+                ),
                 "name": relative,
                 "size": (
                     human_size(folder_state.size_bytes)
@@ -749,6 +813,11 @@ class BlobBrowser:
                 ),
                 "tier": "" if row.is_prefix else row.access_tier,
                 "modified": "" if row.is_prefix else row.last_modified,
+                "retention": (
+                    f"{row.remaining_retention_days}d"
+                    if row.remaining_retention_days is not None
+                    else "-"
+                ),
             }
         if isinstance(row, AccountQueueStats):
             return {
@@ -947,12 +1016,29 @@ class BlobBrowser:
                 "",
                 row.resource_id,
             ]
-        if isinstance(row, str):
-            state = self.container_usage.get(row)
+        if isinstance(row, ContainerItem):
+            state = (
+                None
+                if row.is_deleted
+                else self.container_usage.get(row.name)
+            )
             lines = [
-                f"Container: {row}",
-                f"AML snapshot: {'yes' if self._is_aml_snapshot(row) else 'no'}",
+                f"Container: {row.name}",
+                f"Soft deleted: {'yes' if row.is_deleted else 'no'}",
+                f"AML snapshot: "
+                f"{'yes' if self._is_aml_snapshot(row.name) else 'no'}",
             ]
+            if row.is_deleted:
+                lines.extend(
+                    [
+                        f"Version: {row.version or '-'}",
+                        f"Deleted time: {row.deleted_time or '-'}",
+                        "Remaining retention: "
+                        f"{row.remaining_retention_days} days"
+                        if row.remaining_retention_days is not None
+                        else "Remaining retention: -",
+                    ]
+                )
             if state:
                 lines.extend(
                     [
@@ -1004,10 +1090,22 @@ class BlobBrowser:
                 f"Name: {relative}",
                 f"Path: {row.name}",
                 f"URL: {url}",
+                f"Soft deleted: {'yes' if row.is_deleted else 'no'}",
                 f"Size: {human_size(row.size_bytes)} "
                 f"({row.size_bytes:,} bytes)",
-                "Properties:",
             ]
+            if row.is_deleted:
+                lines.extend(
+                    [
+                        f"Version ID: {row.version_id or '-'}",
+                        f"Deleted time: {row.deleted_time or '-'}",
+                        "Remaining retention: "
+                        f"{row.remaining_retention_days} days"
+                        if row.remaining_retention_days is not None
+                        else "Remaining retention: -",
+                    ]
+                )
+            lines.append("Properties:")
             preferred_properties = [
                 "BlobType",
                 "AccessTier",
@@ -1127,6 +1225,16 @@ class BlobBrowser:
                 if self.show_snapshots
                 else "AML snapshot containers are hidden"
             )
+        elif self.screen in ("containers", "blobs") and key == ord("x"):
+            self.show_deleted = not self.show_deleted
+            self.selected = 0
+            self.offset = 0
+            self.current_marker = ""
+            self.marker_history = []
+            if self.screen == "containers":
+                self._load_containers()
+            else:
+                self._load_blob_page()
         elif self.screen == "blobs" and key == ord("n"):
             self._next_page()
         elif self.screen == "blobs" and key == ord("p"):
@@ -1172,13 +1280,16 @@ class BlobBrowser:
                 )
             self._open_account(account, return_screen="stats")
             return
-        if isinstance(row, str):
+        if isinstance(row, ContainerItem):
+            if row.is_deleted:
+                self._show_item_details(row)
+                return
             if self.sort_keys.get("containers") == "size":
                 self.sort_keys["blobs"] = "size"
                 self.sort_descending["blobs"] = (
                     self.sort_descending.get("containers", False)
                 )
-            self.container = row
+            self.container = row.name
             self.screen = "blobs"
             self.prefix = ""
             self.query = ""
@@ -1325,7 +1436,7 @@ class BlobBrowser:
             timeout_seconds=60,
         )
         self.account = None
-        self.container_names = []
+        self.container_items = []
         if self.catalog.last_load_from_cache:
             age_hours = self.catalog.last_cache_age_seconds / 3600
             source = (
@@ -1370,24 +1481,35 @@ class BlobBrowser:
         assert self.client is not None
         self._busy(f"Loading containers from {self.account.name}...")
         try:
-            self.container_names = sorted(
-                list_containers(self.client, self.account)
+            self.container_items = sorted(
+                list_containers(
+                    self.client,
+                    self.account,
+                    include_deleted=self.show_deleted,
+                ),
+                key=lambda item: (
+                    item.name.casefold(),
+                    item.is_deleted,
+                    item.version,
+                ),
             )
         except StorageError:
-            self.container_names = []
+            self.container_items = []
             raise
         self.container_usage = load_usage_state(
             self.state_path,
             self.account.name,
         )
         self.hidden_snapshot_count = sum(
-            self._is_aml_snapshot(name)
-            for name in self.container_names
+            self._is_aml_snapshot(item.name)
+            for item in self.container_items
+            if not item.is_deleted
         )
+        deleted_count = sum(item.is_deleted for item in self.container_items)
         visible_count = len(self._visible_rows())
         self.status = (
-            f"Loaded {len(self.container_names):,} containers; "
-            f"{visible_count:,} visible"
+            f"Loaded {len(self.container_items):,} containers; "
+            f"{visible_count:,} visible; {deleted_count:,} soft deleted"
         )
 
     def _load_blob_page(self) -> None:
@@ -1414,6 +1536,7 @@ class BlobBrowser:
             self.prefix,
             self.current_marker,
             self.page_size,
+            include_deleted=self.show_deleted,
         )
         self.selected = 0
         self.offset = 0
@@ -1455,8 +1578,16 @@ class BlobBrowser:
         )
         return is_aml_snapshot(container, workspace_ids)
 
+    def _container_type(self, item: ContainerItem) -> str:
+        if item.is_deleted:
+            return "deleted"
+        return "snapshot" if self._is_aml_snapshot(item.name) else "data"
+
     def _delete_selected(self, row: object) -> None:
-        if self.screen == "containers" and isinstance(row, str):
+        if self.screen == "containers" and isinstance(row, ContainerItem):
+            if row.is_deleted:
+                self.status = "Soft-deleted Containers cannot be deleted again"
+                return
             self._delete_container(row)
             return
         if self.screen == "blobs" and isinstance(row, BlobItem):
@@ -1465,13 +1596,17 @@ class BlobBrowser:
                     "Virtual folders cannot be deleted; select an individual Blob"
                 )
                 return
+            if row.is_deleted:
+                self.status = "Soft-deleted Blobs cannot be deleted again"
+                return
             self._delete_blob(row)
             return
         self.status = "Delete is available only for Containers and Blobs"
 
-    def _delete_container(self, container: str) -> None:
+    def _delete_container(self, item: ContainerItem) -> None:
         assert self.account is not None
         assert self.client is not None
+        container = item.name
         state = self.container_usage.get(container)
         if state is not None and state.status == "partial":
             self._modal(
@@ -1488,7 +1623,7 @@ class BlobBrowser:
             f"Container: {container}",
             "",
             "Deleting a Container removes every Blob it contains.",
-            "The operation cannot be undone by this application.",
+            "Recovery depends on the account's Container soft-delete policy.",
         ]
         if self._is_aml_snapshot(container):
             warning.append(
@@ -1506,8 +1641,10 @@ class BlobBrowser:
             self.status = "Container deletion cancelled"
             return
         self.client.delete_container(self.account, container)
-        self.container_names = [
-            name for name in self.container_names if name != container
+        self.container_items = [
+            candidate
+            for candidate in self.container_items
+            if candidate != item
         ]
         self.container_usage.pop(container, None)
         self.selected = max(self.selected - 1, 0)
@@ -1612,6 +1749,7 @@ class BlobBrowser:
                 "O               Toggle ascending/descending sort",
                 "s               Open live scanner statistics",
                 "u               Toggle AML UUID containers (container screen)",
+                "x               Toggle soft-deleted Containers/Blobs",
                 "n / p           Next / previous page (blob screen)",
                 "J               Jump to an exact blob prefix",
                 "i               Show full selected item details",
