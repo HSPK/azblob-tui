@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 - 2026-08-26
+
+- Restore selected soft-deleted Containers and Blobs with `R` and typed
+  confirmation.
+- Support version-specific Container restore and HNS path restore using the
+  Azure-provided deletion ID.
+- Keep restore requests non-retrying when the network result is ambiguous.
+
 ## 0.3.0 - 2026-08-25
 
 - Toggle soft-deleted Containers and Blobs with `x`.

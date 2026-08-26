@@ -62,6 +62,8 @@ Features:
 - Hide Azure ML per-snapshot UUID containers by default.
 - Toggle soft-deleted Containers and Blobs with `x`; show deletion time,
   remaining retention days, and Container/Blob version identifiers.
+- Restore a selected soft-deleted Container or Blob with uppercase `R` and
+  typed confirmation. HNS path restore uses the Azure-provided deletion ID.
 - Search accounts, containers, and the current Blob page.
 - Browse virtual folders with paginated `List Blobs` requests.
 - Coalesce short Azure service pages caused by partition boundaries into one
@@ -79,7 +81,8 @@ Features:
 - Scroll extended Blob properties and metadata with `[` / `]`.
 - Delete an individual Blob or Container with `D` and typed confirmation.
   Partial/in-progress scanner Containers are protected from deletion.
-  Soft-deleted items are read-only; restoration is not performed automatically.
+- Restore soft-deleted items with `R`; restoring requires Storage Blob Data
+  Contributor or equivalent permissions.
 
 Configuration is stored under `${XDG_CONFIG_HOME:-~/.config}/azure-blob-tui`.
 Noncredential resource metadata is cached under
@@ -132,7 +135,7 @@ Keyboard shortcuts are available with `h` or `?`.
 Browsing is read-only. Deletion is available only through the uppercase `D`
 shortcut and requires typed confirmation. Blob deletion uses the displayed
 ETag to reject changes made after the page was loaded. Ambiguous network
-responses are never retried automatically.
+responses from delete or restore operations are never retried automatically.
 
 ## License
 

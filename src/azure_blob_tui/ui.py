@@ -342,10 +342,13 @@ class BlobBrowser:
                 f"Containers{hidden} | soft deleted: "
                 f"{'shown' if self.show_deleted else 'hidden'}"
             )
+        deleted_mode = "hidden"
+        if self.show_deleted:
+            deleted_mode = "only" if self.account.hns_enabled else "shown"
         return (
             f"Azure Blob Browser | {self.account.name}/{self.container}/"
             f"{self.prefix} | soft deleted: "
-            f"{'shown' if self.show_deleted else 'hidden'}"
+            f"{deleted_mode}"
         )
 
     def _help_line(self) -> str:
@@ -358,8 +361,8 @@ class BlobBrowser:
         if self.screen in ("subscriptions", "accounts"):
             return common
         if self.screen == "containers":
-            return f"u UUID  x soft-deleted | {common}"
-        return f"x soft-deleted  n/p page  i details | {common}"
+            return f"u UUID  x soft-deleted  R restore | {common}"
+        return f"x soft-deleted  R restore  n/p page | {common}"
 
     def _visible_rows(self) -> list[object]:
         query = self.query.lower()
@@ -871,6 +874,15 @@ class BlobBrowser:
             f"{service_pages:,} service page"
             f"{'s' if service_pages != 1 else ''}"
         ]
+        if (
+            self.account is not None
+            and self.account.hns_enabled
+            and self.show_deleted
+        ):
+            parts.append("HNS soft-deleted items only")
+            if self.next_marker:
+                parts.append("current page only; n for next")
+            return " | ".join(parts)
         scope = self._scope_usage()
         if scope is not None:
             state = self.container_usage.get(self.container)
@@ -1098,6 +1110,7 @@ class BlobBrowser:
                 lines.extend(
                     [
                         f"Version ID: {row.version_id or '-'}",
+                        f"Deletion ID: {row.deletion_id or '-'}",
                         f"Deleted time: {row.deleted_time or '-'}",
                         "Remaining retention: "
                         f"{row.remaining_retention_days} days"
@@ -1195,6 +1208,9 @@ class BlobBrowser:
             self._cycle_sort()
         elif key == ord("O"):
             self._toggle_sort_direction()
+        elif key == ord("R"):
+            if rows:
+                self._restore_selected(rows[self.selected])
         elif key == ord("D"):
             if rows:
                 self._delete_selected(rows[self.selected])
@@ -1603,6 +1619,79 @@ class BlobBrowser:
             return
         self.status = "Delete is available only for Containers and Blobs"
 
+    def _restore_selected(self, row: object) -> None:
+        if self.screen == "containers" and isinstance(row, ContainerItem):
+            if not row.is_deleted:
+                self.status = "Select a soft-deleted Container to restore"
+                return
+            self._restore_container(row)
+            return
+        if self.screen == "blobs" and isinstance(row, BlobItem):
+            if row.is_prefix or not row.is_deleted:
+                self.status = "Select a soft-deleted Blob or path to restore"
+                return
+            self._restore_blob(row)
+            return
+        self.status = "Restore is available only for soft-deleted items"
+
+    def _restore_container(self, item: ContainerItem) -> None:
+        assert self.account is not None
+        assert self.client is not None
+        self._modal(
+            "Restore Container",
+            [
+                f"Storage Account: {self.account.name}",
+                f"Container: {item.name}",
+                f"Deleted time: {item.deleted_time or '-'}",
+                f"Version: {item.version or '-'}",
+                "",
+                "The original Container name must currently be unused.",
+                "Type the full Container name to restore it.",
+            ],
+        )
+        if self._prompt("Confirm") != item.name:
+            self.status = "Container restore cancelled"
+            return
+        self.client.restore_container(
+            self.account,
+            item.name,
+            item.version,
+        )
+        self._load_containers()
+        self.status = f"Restored Container: {item.name}"
+
+    def _restore_blob(self, blob: BlobItem) -> None:
+        assert self.account is not None
+        assert self.client is not None
+        self._modal(
+            "Restore Blob",
+            [
+                f"Storage Account: {self.account.name}",
+                f"Container: {self.container}",
+                f"Blob/path: {blob.name}",
+                f"Deleted time: {blob.deleted_time or '-'}",
+                "Remaining retention: "
+                f"{blob.remaining_retention_days} days"
+                if blob.remaining_retention_days is not None
+                else "Remaining retention: -",
+                "",
+                "Type RESTORE to restore this item.",
+            ],
+        )
+        if self._prompt("Type RESTORE to confirm") != "RESTORE":
+            self.status = "Blob restore cancelled"
+            return
+        self.client.restore_blob(
+            self.account,
+            self.container,
+            blob.name,
+            deletion_id=blob.deletion_id,
+        )
+        self.current_marker = ""
+        self.marker_history = []
+        self._load_blob_page()
+        self.status = f"Restored Blob/path: {blob.name}"
+
     def _delete_container(self, item: ContainerItem) -> None:
         assert self.account is not None
         assert self.client is not None
@@ -1755,6 +1844,7 @@ class BlobBrowser:
                 "i               Show full selected item details",
                 "[ / ]           Scroll the right-side details",
                 "D               Delete selected Blob/Container with confirmation",
+                "R               Restore selected soft-deleted item",
                 "g / G           First / last item",
                 "h / ?           Show this help",
                 "Ctrl+C          Exit",

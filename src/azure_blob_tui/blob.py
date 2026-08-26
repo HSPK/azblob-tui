@@ -165,23 +165,81 @@ class BlobRestClient:
             f"{quote(blob_name, safe='/')}"
         )
         headers = {"If-Match": etag} if etag else {}
-        self._delete(account, path, {}, headers)
+        self._mutate(account, "DELETE", "DELETE", path, {}, headers)
 
     def delete_container(
         self,
         account: StorageAccount,
         container: str,
     ) -> None:
-        self._delete(
+        self._mutate(
             account,
+            "DELETE",
+            "DELETE",
             quote(container, safe=""),
             {"restype": "container"},
             {},
         )
 
-    def _delete(
+    def restore_blob(
         self,
         account: StorageAccount,
+        container: str,
+        blob_name: str,
+        deletion_id: str = "",
+    ) -> None:
+        path = (
+            f"{quote(container, safe='')}/"
+            f"{quote(blob_name, safe='/')}"
+        )
+        headers: dict[str, str] = {}
+        if account.hns_enabled:
+            if not deletion_id:
+                raise StorageError(
+                    "Azure did not return the DeletionId required to "
+                    "restore this HNS path."
+                )
+            headers["x-ms-undelete-source"] = (
+                f"{quote(blob_name, safe='/')}?"
+                f"deletionid={quote(deletion_id, safe='')}"
+            )
+        self._mutate(
+            account,
+            "PUT",
+            "RESTORE",
+            path,
+            {"comp": "undelete"},
+            headers,
+        )
+
+    def restore_container(
+        self,
+        account: StorageAccount,
+        container: str,
+        version: str,
+    ) -> None:
+        if not version:
+            raise StorageError(
+                "Azure did not return the version required to restore "
+                "this Container."
+            )
+        self._mutate(
+            account,
+            "PUT",
+            "RESTORE",
+            quote(container, safe=""),
+            {"restype": "container", "comp": "undelete"},
+            {
+                "x-ms-deleted-container-name": container,
+                "x-ms-deleted-container-version": version,
+            },
+        )
+
+    def _mutate(
+        self,
+        account: StorageAccount,
+        method: str,
+        operation: str,
         path: str,
         parameters: dict[str, str],
         extra_headers: dict[str, str],
@@ -197,12 +255,13 @@ class BlobRestClient:
             url = f"{url}?{urlencode(parameters)}"
         request = Request(
             url,
-            method="DELETE",
+            method=method,
             headers={
                 "Authorization": f"Bearer {token}",
                 "x-ms-date": formatdate(usegmt=True),
                 "x-ms-version": API_VERSION,
                 "x-ms-client-request-id": str(uuid.uuid4()),
+                **({"Content-Length": "0"} if method == "PUT" else {}),
                 **extra_headers,
             },
         )
@@ -213,7 +272,7 @@ class BlobRestClient:
             body = error.read(65536)
             code, message = storage_error_details(body)
             raise StorageError(
-                f"{account.name}: DELETE HTTP {error.code} "
+                f"{account.name}: {operation} HTTP {error.code} "
                 f"{code}: {message}"
             ) from error
         except (
@@ -226,7 +285,8 @@ class BlobRestClient:
                 error.reason if isinstance(error, URLError) else error
             )
             raise StorageError(
-                "DELETE response was not received; the outcome is unknown. "
+                f"{operation} response was not received; "
+                "the outcome is unknown. "
                 f"Refresh before any retry. Network error: {reason}"
             ) from error
 
@@ -345,6 +405,10 @@ def parse_blob_page(root: ET.Element) -> tuple[list[BlobItem], str]:
                 "VersionId",
                 default=property_values.get("VersionId", ""),
             )
+            deletion_id = node.findtext(
+                "DeletionId",
+                default=property_values.get("DeletionId", ""),
+            )
             deleted_time = node.findtext(
                 "DeletedTime",
                 default=property_values.get("DeletedTime", ""),
@@ -359,6 +423,7 @@ def parse_blob_page(root: ET.Element) -> tuple[list[BlobItem], str]:
                     is_prefix=False,
                     is_deleted=_is_true(deleted),
                     version_id=version_id,
+                    deletion_id=deletion_id,
                     deleted_time=deleted_time,
                     remaining_retention_days=_optional_int(retention),
                     size_bytes=size_bytes,
@@ -415,10 +480,13 @@ def list_hierarchy_page(
             "comp": "list",
             "delimiter": "/",
             "maxresults": min(remaining, 5000),
-            "include": (
-                "metadata,deleted" if include_deleted else "metadata"
-            ),
+            "include": "metadata",
         }
+        if include_deleted:
+            if account.hns_enabled:
+                parameters["showonly"] = "deleted"
+            else:
+                parameters["include"] = "metadata,deleted"
         if prefix:
             parameters["prefix"] = prefix
         if marker:

@@ -68,5 +68,6 @@ class BlobItem:
     metadata: dict[str, str] = field(default_factory=dict)
     is_deleted: bool = False
     version_id: str = ""
+    deletion_id: str = ""
     deleted_time: str = ""
     remaining_retention_days: int | None = None

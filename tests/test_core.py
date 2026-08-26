@@ -90,6 +90,7 @@ class CoreTests(unittest.TestCase):
                   <Name>deleted.bin</Name>
                   <Deleted>true</Deleted>
                   <VersionId>version-2</VersionId>
+                  <DeletionId>deletion-2</DeletionId>
                   <DeletedTime>today</DeletedTime>
                   <RemainingRetentionDays>7</RemainingRetentionDays>
                   <Properties>
@@ -103,6 +104,7 @@ class CoreTests(unittest.TestCase):
         blobs, _ = parse_blob_page(blob_root)
         self.assertTrue(blobs[0].is_deleted)
         self.assertEqual("version-2", blobs[0].version_id)
+        self.assertEqual("deletion-2", blobs[0].deletion_id)
         self.assertEqual(7, blobs[0].remaining_retention_days)
 
     def test_deleted_blob_listing_uses_include_flag(self):
@@ -150,6 +152,25 @@ class CoreTests(unittest.TestCase):
             include_deleted=True,
         )
         self.assertEqual("metadata,deleted", client.parameters["include"])
+        hns_account = StorageAccount(
+            "hns",
+            "rg",
+            "loc",
+            "/id",
+            "https://hns.example/",
+            True,
+        )
+        list_hierarchy_page(
+            client,
+            hns_account,
+            "container",
+            "",
+            "",
+            500,
+            include_deleted=True,
+        )
+        self.assertEqual("metadata", client.parameters["include"])
+        self.assertEqual("deleted", client.parameters["showonly"])
 
     def test_delete_is_not_retried_after_ambiguous_response(self):
         class Token:
@@ -206,6 +227,100 @@ class CoreTests(unittest.TestCase):
         self.assertEqual("DELETE", request.method)
         self.assertEqual('"etag"', request.headers["If-match"])
         self.assertIn("/container/a/file", request.full_url)
+
+    def test_restore_container_and_blob_requests(self):
+        class Token:
+            def get(self):
+                return "token"
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self):
+                return b""
+
+        account = StorageAccount(
+            "sa",
+            "rg",
+            "loc",
+            "/id",
+            "https://sa.example/",
+            False,
+        )
+        client = BlobRestClient(Token())
+        with patch(
+            "azure_blob_tui.blob.urlopen",
+            return_value=Response(),
+        ) as urlopen:
+            client.restore_container(account, "deleted", "version")
+            request = urlopen.call_args.args[0]
+            headers = {
+                key.lower(): value
+                for key, value in request.header_items()
+            }
+            self.assertEqual("PUT", request.method)
+            self.assertIn(
+                "/deleted?restype=container&comp=undelete",
+                request.full_url,
+            )
+            self.assertEqual(
+                "deleted",
+                headers["x-ms-deleted-container-name"],
+            )
+            self.assertEqual(
+                "version",
+                headers["x-ms-deleted-container-version"],
+            )
+
+            client.restore_blob(account, "container", "a/file")
+            request = urlopen.call_args.args[0]
+            self.assertEqual("PUT", request.method)
+            self.assertIn(
+                "/container/a/file?comp=undelete",
+                request.full_url,
+            )
+
+    def test_hns_restore_requires_deletion_id_and_is_not_retried(self):
+        class Token:
+            def get(self):
+                return "token"
+
+        account = StorageAccount(
+            "hns",
+            "rg",
+            "loc",
+            "/id",
+            "https://hns.example/",
+            True,
+        )
+        client = BlobRestClient(Token(), max_attempts=6)
+        with self.assertRaisesRegex(StorageError, "DeletionId"):
+            client.restore_blob(account, "container", "a/file")
+
+        with patch(
+            "azure_blob_tui.blob.urlopen",
+            side_effect=http.client.RemoteDisconnected("closed"),
+        ) as request:
+            with self.assertRaisesRegex(StorageError, "outcome is unknown"):
+                client.restore_blob(
+                    account,
+                    "container",
+                    "a/file",
+                    deletion_id="deletion",
+                )
+        self.assertEqual(1, request.call_count)
+        headers = {
+            key.lower(): value
+            for key, value in request.call_args.args[0].header_items()
+        }
+        self.assertEqual(
+            "a/file?deletionid=deletion",
+            headers["x-ms-undelete-source"],
+        )
 
     def test_short_service_pages_are_coalesced(self):
         roots = {

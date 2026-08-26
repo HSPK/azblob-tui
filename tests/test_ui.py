@@ -24,12 +24,30 @@ class FakeClient:
     def __init__(self):
         self.deleted_blobs = []
         self.deleted_containers = []
+        self.restored_blobs = []
+        self.restored_containers = []
 
     def delete_blob(self, account, container, name, etag=""):
         self.deleted_blobs.append((account.name, container, name, etag))
 
     def delete_container(self, account, container):
         self.deleted_containers.append((account.name, container))
+
+    def restore_blob(
+        self,
+        account,
+        container,
+        name,
+        deletion_id="",
+    ):
+        self.restored_blobs.append(
+            (account.name, container, name, deletion_id)
+        )
+
+    def restore_container(self, account, container, version):
+        self.restored_containers.append(
+            (account.name, container, version)
+        )
 
 
 class FakePromptWindow:
@@ -322,18 +340,36 @@ class UiTests(unittest.TestCase):
         self.assertIn("Soft deleted: yes", app._detail_lines(container))
         app._delete_selected(container)
         self.assertIn("cannot be deleted again", app.status)
+        app.client = FakeClient()
+        app._modal = lambda *_: None
+        app._prompt = lambda *_: "deleted"
+        app._load_containers = lambda: None
+        app._restore_selected(container)
+        self.assertEqual(
+            [("sa", "deleted", "version")],
+            app.client.restored_containers,
+        )
 
         blob = BlobItem(
             "deleted.bin",
             is_prefix=False,
             is_deleted=True,
+            deletion_id="deletion",
             remaining_retention_days=5,
         )
         app.screen = "blobs"
+        app.container = "container"
         self.assertEqual("DELETED", app._row_values(blob)["kind"])
         self.assertEqual("5d", app._row_values(blob)["retention"])
         app._delete_selected(blob)
         self.assertIn("cannot be deleted again", app.status)
+        app._prompt = lambda *_: "RESTORE"
+        app._load_blob_page = lambda: None
+        app._restore_selected(blob)
+        self.assertEqual(
+            [("sa", "container", "deleted.bin", "deletion")],
+            app.client.restored_blobs,
+        )
 
     def test_prompt_disables_refresh_timeout_while_typing(self):
         app = BlobBrowser(
